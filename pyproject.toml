@@ -19,13 +19,6 @@ dependencies = [
     "python-multipart>=0.0.9",
     # UI
     "streamlit>=1.36",
-    # Orchestration
-    "langgraph>=0.2.50",
-    "langchain-core>=0.3",
-    "langchain-openai>=0.2",
-    # Retrieval / integrations
-    "azure-search-documents>=11.5",
-    "azure-core>=1.30",
     # Config / models
     "pydantic>=2.7",
     "pydantic-settings>=2.4",

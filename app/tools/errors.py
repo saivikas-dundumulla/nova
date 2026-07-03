@@ -8,7 +8,7 @@ class ToolError(Exception):
 class SourceUnavailable(ToolError):
     """A backing data source (Azure Search, Kibana) is unreachable or returned an error.
 
-    Callers should catch this and update state.source_status; the graph continues with a caveat.
+    Callers should catch this and surface a source-status event; the request degrades gracefully.
     """
 
     def __init__(self, source: str, detail: str = "") -> None:

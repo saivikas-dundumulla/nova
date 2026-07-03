@@ -4,6 +4,10 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
+from app.tools.errors import SourceUnavailable
+from app.tools.knowledge_base import KnowledgeBaseClient
+from app.tools.schemas import ChatTurn
+
 
 def _dump(obj: Any) -> str:
     return json.dumps(obj, default=str, ensure_ascii=False)
@@ -14,52 +18,79 @@ def frame(event: str, data: dict[str, Any]) -> dict[str, str]:
     return {"event": event, "data": _dump(data)}
 
 
-async def stream_graph_events(
-    graph: Any,
-    inputs: dict[str, Any],
-    config: dict[str, Any],
+def _chunk_answer(text: str, size: int = 24) -> list[str]:
+    """Split the synthesized answer into small chunks to stream a typing effect.
+
+    The retrieve API returns the whole answer at once, so we simulate token streaming
+    for the UI rather than blocking on the full response.
+    """
+    words = text.split(" ")
+    chunks: list[str] = []
+    buf = ""
+    for w in words:
+        buf = w if not buf else f"{buf} {w}"
+        if len(buf) >= size:
+            chunks.append(buf + " ")
+            buf = ""
+    if buf:
+        chunks.append(buf)
+    return chunks
+
+
+async def stream_kb_answer(
+    *,
+    prompt: str,
+    knowledge_base: str,
+    history: list[ChatTurn],
+    role: str,
+    user_id: str,
+    thread_id: str,
+    client: KnowledgeBaseClient | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """Consume `graph.astream_events(v='v2')` and yield sse-starlette frame dicts."""
+    """Query the knowledge base and stream SSE frames (status, chunked answer, final)."""
+    kb = client or KnowledgeBaseClient()
+    yield frame("tool_call_start", {"tool": f"knowledge_base:{knowledge_base}"})
     try:
-        async for event in graph.astream_events(inputs, config=config, version="v2"):
-            evt = event.get("event")
-            data = event.get("data", {})
-            name = event.get("name", "")
-
-            if evt == "on_chat_model_stream":
-                chunk = data.get("chunk")
-                delta = getattr(chunk, "content", None) if chunk is not None else None
-                if delta:
-                    yield frame("token", {"delta": delta})
-
-            elif evt == "on_custom_event":
-                # Emitted from nodes via langchain_core.callbacks.dispatch_custom_event(name, payload)
-                payload = data if isinstance(data, dict) else {"data": data}
-                yield frame(name or "custom", payload)
-
-            elif evt == "on_tool_start":
-                yield frame("tool_call_start", {"tool": name})
-            elif evt == "on_tool_end":
-                out = data.get("output")
-                hit_count = len(out) if isinstance(out, list) else None
-                yield frame(
-                    "tool_call_end",
-                    {"tool": name, "hit_count": hit_count, "status": "ok"},
-                )
-            elif evt == "on_chain_end" and name == "LangGraph":
-                final_state = data.get("output") or {}
-                messages = final_state.get("messages") or []
-                answer = ""
-                if messages:
-                    last = messages[-1]
-                    answer = getattr(last, "content", "") or ""
-                yield frame(
-                    "final",
-                    {
-                        "answer": answer,
-                        "draft": final_state.get("draft_incident"),
-                        "source_status": final_state.get("source_status"),
-                    },
-                )
+        result = await kb.retrieve(
+            prompt,
+            knowledge_base=knowledge_base,
+            history=history,
+            role=role,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+    except SourceUnavailable as e:
+        yield frame("source_status", {"source": "azure_search", "status": "down"})
+        yield frame("error", {"code": "source_unavailable", "message": str(e)})
+        return
     except Exception as e:
-        yield frame("error", {"code": "graph_error", "message": str(e)})
+        yield frame("error", {"code": "kb_error", "message": str(e)})
+        return
+    finally:
+        if client is None:
+            await kb.aclose()
+
+    yield frame(
+        "tool_call_end",
+        {
+            "tool": f"knowledge_base:{knowledge_base}",
+            "status": "partial" if result.partial else "ok",
+            "hit_count": len(result.references),
+            "sources_queried": result.sources_queried,
+        },
+    )
+    if result.partial:
+        yield frame("source_status", {"source": "azure_search", "status": "degraded"})
+
+    for chunk in _chunk_answer(result.answer):
+        yield frame("token", {"delta": chunk})
+
+    yield frame(
+        "final",
+        {
+            "answer": result.answer,
+            "references": [r.model_dump() for r in result.references],
+            "sources_queried": result.sources_queried,
+            "partial": result.partial,
+        },
+    )

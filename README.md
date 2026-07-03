@@ -2,19 +2,23 @@
 
 Internal AI assistant that helps resolve operational issues through two role-gated workflows:
 
-- **End User self-service** — an employee describes an issue in natural language, the agent searches an Azure AI Search index (ServiceNow incidents + Confluence KBs) and, if the issue is technical, Kibana logs. If it can't resolve the issue, it drafts a structured incident for the user to file.
-- **Ombudsman-assisted investigation** — an ombudsman provides an existing incident number; the agent pulls that incident, finds related KBs, correlates Kibana logs, and produces an investigation summary.
+- **End User self-service** — an employee describes an issue in natural language and gets a grounded resolution.
+- **Ombudsman-assisted investigation** — an ombudsman provides an incident number and gets an investigation summary.
 
-Both flows run on the same LangGraph agent behind a FastAPI SSE endpoint. The Streamlit UI consumes the stream and renders token-by-token output and tool-call status live.
+Both flows send the user's prompt to a single **Azure AI Search agentic knowledge base**, which performs retrieval over its MCP knowledge sources (ServiceNow + Confluence) **and** answer synthesis in-service, then returns a finished, grounded answer with citations. The app itself holds **no LLM** and connects to **only** Azure AI Search.
 
 ## Architecture
 
 ```
-Streamlit UI  ──SSE──▶  FastAPI /chat/stream  ──▶  LangGraph  ─┬──▶ azure_search_retrieval  (Azure AI Search)
-                                                               └──▶ kibana_search           (Kibana REST)
+Streamlit UI  ──SSE──▶  FastAPI /chat/stream  ──HTTPS──▶  Azure AI Search
+                                                          knowledgebases/{kb}/retrieve
+                                                          (retrieval + LLM synthesis in-service,
+                                                           over ServiceNow + Confluence MCP sources)
 ```
 
-The Azure AI Search index is kept in sync with ServiceNow and Confluence by a separate upstream MCP pipeline — **out of scope for this app**. This app only reads from the index. The only new external integration built here is the Kibana REST client.
+- **No separate LLM.** The knowledge base (`nova-kb`) has its own model configured; the backend just posts the prompt and receives the synthesized answer.
+- **One external dependency.** The only outbound connection is to the Azure AI Search endpoint.
+- The retrieve API returns the whole answer at once; the backend chunks it into SSE `token` frames so the UI still renders a live typing effect.
 
 ## Quick start
 
@@ -28,13 +32,15 @@ python -m pip install -e ".[dev]"
 cp .env.example .env       # PowerShell: Copy-Item .env.example .env
 
 # 3. in one terminal, start the API
-uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
 
 # 4. in another terminal, start the UI
-streamlit run app/ui/streamlit_app.py
+python -m streamlit run app/ui/streamlit_app.py
 ```
 
-Open http://localhost:8501 and log in with one of the demo users (see `.env.example`).
+Open http://localhost:8501 and log in with a demo user.
+
+> Note: `uvicorn` / `streamlit` may not be on your PATH after `pip install`. Use `python -m uvicorn …` / `python -m streamlit …` as shown.
 
 ### Demo credentials
 
@@ -53,19 +59,19 @@ See `.env.example` for the full list. Key groups:
 
 | Group | Purpose |
 |---|---|
-| `AZURE_OPENAI_*` | LLM (Azure OpenAI, via `langchain-openai.AzureChatOpenAI`) |
-| `AZURE_SEARCH_*` | Unified retrieval index — endpoint, key, index name, field mapping |
-| `KIBANA_*` | Kibana REST endpoint + API key |
+| `AZURE_SEARCH_*` | Knowledge base endpoint, API key, API version, and KB name (`nova-kb`) |
 | `SESSION_JWT_*` | Stub-auth session token signing |
 | `AUTH_USERS_JSON` | Stub-auth user store (JSON dict, bcrypt hashes) |
 | `AUDIT_LOG_*` | JSONL audit log file settings |
 
+The retrieve endpoint used is:
+`POST {AZURE_SEARCH_ENDPOINT}/knowledgebases/{AZURE_SEARCH_KNOWLEDGE_BASE}/retrieve?api-version={AZURE_SEARCH_API_VERSION}`
+
 ## Testing
 
 ```bash
-pytest -q
-ruff check app tests
-mypy app
+python -m pytest -q
+python -m ruff check app tests
 ```
 
 ## Repo layout
@@ -75,26 +81,23 @@ app/
 ├── config/     Settings + logging config
 ├── auth/       User model + Authenticator Protocol + stub impl
 ├── audit/      JSONL audit sink + event models
-├── tools/      Azure Search + Kibana LangChain tools
-├── graph/      LangGraph state + nodes + builder
+├── tools/      Knowledge base client (Azure AI Search retrieve) + schemas
 ├── api/        FastAPI app + SSE chat endpoint
-└── ui/         Streamlit frontend
+└── ui/         Streamlit frontend (views/ holds login + role screens; not a Streamlit pages/ dir on purpose)
 tests/
-├── unit/       Unit tests per module
-└── integration/  End-to-end SSE + graph flow tests
+├── unit/       Auth, audit, KB client, SSE parser
+└── integration/  Auth API + /chat/stream SSE
 ```
-
-## Open items (see plan file)
-
-- Azure AI Search index schema — placeholder field names in `.env.example`, swap to real ones.
-- Kibana specifics — API key auth assumed; confirm index pattern.
-- Escalation draft schema — v1 fields are title/category/description/evidence.
-- Audit retention policy — local rotating file for v1.
-- Real auth — Entra ID OIDC drops in behind the `Authenticator` Protocol.
 
 ## Non-functional properties
 
-- **Streaming** — end-to-end token + tool-event streaming via `graph.astream_events(v="v2")` → SSE.
-- **Graceful degradation** — if Kibana or Azure Search is down, the agent proceeds with a caveat rather than failing the request.
-- **Audit** — every tool call is emitted to a separate JSONL log with hashed queries, never raw content.
-- **PII** — free-text user queries and incident bodies are never written to the app-level log; audit log stores only sha256 hashes.
+- **Streaming** — status events + chunked answer streamed to the UI via SSE.
+- **Graceful degradation** — if the knowledge base is unreachable or returns `206 Partial Content`, the UI shows a source-status banner instead of failing.
+- **Audit** — every retrieve call is emitted to a separate JSONL log with a hashed query, never raw content.
+- **PII** — user prompts and answer bodies are never written to the app-level log; the audit log stores only a sha256 hash of the query.
+
+## Notes / open items
+
+- **API version:** the working data-plane version on this service is `2026-05-01-preview` against the `/knowledgebases/{name}/retrieve` route. (The older `/agents/` route only supports up to `2025-08-01-preview` and rejects the agents' newer features.)
+- **Auth:** stubbed for v1 behind the `Authenticator` Protocol in `app/auth/base.py`; Entra ID / OIDC drops in there without touching the rest of the app.
+- **Multi-turn:** the UI sends prior turns as `history`, which the backend forwards to the knowledge base for conversational context.

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 import pytest
 from passlib.hash import bcrypt
@@ -26,14 +25,11 @@ os.environ.setdefault(
         }
     ),
 )
-os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://fake.openai.azure.com/")
-os.environ.setdefault("AZURE_OPENAI_API_KEY", "fake")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+# Point the KB client at a fake endpoint; tests inject a mock transport/client.
 os.environ.setdefault("AZURE_SEARCH_ENDPOINT", "https://fake.search.windows.net")
-os.environ.setdefault("AZURE_SEARCH_API_KEY", "fake")
-os.environ.setdefault("AZURE_SEARCH_INDEX_NAME", "test-index")
-os.environ.setdefault("KIBANA_URL", "https://kibana.example.com")
-os.environ.setdefault("KIBANA_API_KEY", "fake")
+os.environ.setdefault("AZURE_SEARCH_API_KEY", "fake-key")
+os.environ.setdefault("AZURE_SEARCH_KNOWLEDGE_BASE", "nova-kb")
+os.environ.setdefault("AZURE_SEARCH_API_VERSION", "2026-05-01-preview")
 
 
 @pytest.fixture(autouse=True)
@@ -60,35 +56,34 @@ def _isolate_audit_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def fake_search_hits() -> list[dict[str, Any]]:
-    return [
-        {
-            "id": "1",
-            "source_type": "confluence",
-            "title": "Reset your VPN password",
-            "content": "Open Settings → Security → Reset. This resolves 90% of connection errors.",
-            "url": "https://kb.example.com/vpn-reset",
-            "score": 0.91,
-        },
-        {
-            "id": "2",
-            "source_type": "servicenow",
-            "incident_number": "INC0012345",
-            "title": "VPN outage in region EU-West",
-            "content": "Full outage 2024-05-01 08:00–10:30 UTC. Root cause: expired certificate.",
-            "url": "https://sn.example.com/INC0012345",
-            "score": 0.87,
-        },
-    ]
-
-
-@pytest.fixture
-def fake_log_hits() -> list[dict[str, Any]]:
-    return [
-        {
-            "ts": "2026-07-03T09:15:22Z",
-            "service": "vpn-gateway",
-            "level": "ERROR",
-            "message": "TLS handshake failed: certificate expired",
-        }
-    ]
+def fake_kb_response() -> dict:
+    """A representative knowledge base `retrieve` response (answer synthesis mode)."""
+    return {
+        "@odata.context": "https://fake.search.windows.net/$metadata#...AgentRetrievalResponse",
+        "response": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "To reset your VPN password, open Settings → Security → "
+                        "Reset. This resolves most connection errors.",
+                    }
+                ],
+            }
+        ],
+        "activity": [
+            {"type": "modelQueryPlanning", "id": 0, "inputTokens": 100, "outputTokens": 20},
+            {"type": "mcpServer", "id": 1, "knowledgeSourceName": "nova-confluence-ks-ext", "count": 3},
+            {"type": "modelAnswerSynthesis", "id": 2, "inputTokens": 500, "outputTokens": 40},
+        ],
+        "references": [
+            {
+                "type": "mcpServer",
+                "id": "0",
+                "activitySource": 1,
+                "docKey": "vpn-reset",
+                "sourceData": {"title": "Reset your VPN password", "url": "https://kb/vpn-reset"},
+            }
+        ],
+    }

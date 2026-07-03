@@ -37,32 +37,17 @@ class Settings(BaseSettings):
     # Auth (stub)
     auth_users_json: str = "{}"
 
-    # Azure OpenAI
-    azure_openai_endpoint: str = ""
-    azure_openai_api_key: str = ""
-    azure_openai_api_version: str = "2024-06-01"
-    azure_openai_deployment: str = "gpt-4o"
-    azure_openai_temperature: float = 0.1
-
-    # Azure AI Search
+    # Azure AI Search — agentic knowledge base (retrieval + synthesis handled by the service)
     azure_search_endpoint: str = ""
     azure_search_api_key: str = ""
-    azure_search_index_name: str = "ombuds-knowledge"
-    azure_search_field_source_type: str = "source_type"
-    azure_search_field_incident_number: str = "incident_number"
-    azure_search_field_title: str = "title"
-    azure_search_field_content: str = "content"
-    azure_search_field_url: str = "url"
-    azure_search_semantic_config: str = "default"
-    azure_search_top_k: int = 8
-
-    # Kibana
-    kibana_url: str = ""
-    kibana_api_key: str = ""
-    kibana_index_pattern: str = "logs-*"
-    kibana_default_time_range: str = "24h"
-    kibana_timeout_seconds: float = 10.0
-    kibana_max_hits: int = 25
+    azure_search_api_version: str = "2026-05-01-preview"
+    # Knowledge base that unifies the ServiceNow + Confluence MCP sources.
+    azure_search_knowledge_base: str = "nova-kb"
+    # Optional per-role override; falls back to azure_search_knowledge_base when blank.
+    azure_search_kb_enduser: str = ""
+    azure_search_kb_ombuds: str = ""
+    azure_search_timeout_seconds: float = 120.0
+    azure_search_max_retries: int = 2
 
     # Audit / logging
     audit_log_path: str = "logs/audit.log"
@@ -79,6 +64,13 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
+
+    def knowledge_base_for_role(self, role: str) -> str:
+        if role == "enduser" and self.azure_search_kb_enduser:
+            return self.azure_search_kb_enduser
+        if role == "ombuds" and self.azure_search_kb_ombuds:
+            return self.azure_search_kb_ombuds
+        return self.azure_search_knowledge_base
 
     @property
     def auth_users(self) -> dict[str, AuthUser]:

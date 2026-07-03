@@ -10,10 +10,6 @@ EventType = Literal[
     "login_failed",
     "logout",
     "tool_call",
-    "graph_run",
-    "graph_error",
-    "draft_created",
-    "draft_confirmed",
 ]
 
 
@@ -34,4 +30,4 @@ class AuditEvent(BaseModel):
     status: str | None = None
     hit_count: int | None = None
     source_status: dict[str, str] | None = None
-    message: str | None = None  # short, non-PII (e.g. "kibana degraded")
+    message: str | None = None  # short, non-PII (e.g. "source degraded")

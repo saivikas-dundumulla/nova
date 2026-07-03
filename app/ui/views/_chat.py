@@ -13,34 +13,20 @@ def _render_source_status(status: dict[str, str]) -> None:
         return
     parts = []
     for src, st_ in status.items():
-        icon = {"ok": "✅", "degraded": "⚠️", "down": "❌", "skipped": "⏭️"}.get(st_, "•")
+        icon = {"ok": "✅", "degraded": "⚠️", "down": "❌"}.get(st_, "•")
         parts.append(f"{icon} {src}: {st_}")
     st.caption(" · ".join(parts))
 
 
-def _render_draft(draft: dict[str, Any]) -> None:
-    with st.container(border=True):
-        st.subheader("Draft escalation")
-        st.caption(
-            "The assistant couldn't resolve the issue from the knowledge base. "
-            "Copy this draft when opening a ticket."
-        )
-        st.text_input("Short description", value=draft.get("short_description", ""), key="draft_sd")
-        cols = st.columns(2)
-        cols[0].text_input("Category", value=draft.get("category", ""), key="draft_cat")
-        cols[1].text_input(
-            "Suggested priority",
-            value=draft.get("suggested_priority", "medium"),
-            key="draft_pri",
-        )
-        st.text_area("Description", value=draft.get("description", ""), height=200, key="draft_desc")
-        evidence = draft.get("evidence") or []
-        if evidence:
-            st.markdown("**Evidence**")
-            for e in evidence:
-                title = e.get("title", "")
-                url = e.get("url", "")
-                st.markdown(f"- [{title}]({url})" if url else f"- {title}")
+def _render_references(refs: list[dict[str, Any]]) -> None:
+    if not refs:
+        return
+    with st.expander(f"References ({len(refs)})", expanded=False):
+        for i, r in enumerate(refs, 1):
+            title = r.get("title") or r.get("doc_key") or f"reference {r.get('id', i)}"
+            url = r.get("url")
+            src = r.get("type") or "source"
+            st.markdown(f"{i}. [{title}]({url}) — _{src}_" if url else f"{i}. {title} — _{src}_")
 
 
 def render_chat(role: str, needs_incident_number: bool) -> None:
@@ -49,8 +35,6 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if st.session_state.get("last_draft"):
-        _render_draft(st.session_state["last_draft"])
     _render_source_status(st.session_state.get("last_source_status") or {})
 
     incident_number: str | None = None
@@ -69,6 +53,9 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
         st.warning("Please enter an incident number first.")
         return
 
+    # History = everything already in the transcript (before this new turn).
+    history = list(st.session_state.get("messages", []))
+
     append_message("user", user_message)
     with st.chat_message("user"):
         st.markdown(user_message)
@@ -82,6 +69,7 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
         "role": role,
         "message": user_message,
         "incident_number": incident_number,
+        "history": history,
         "thread_id": st.session_state.get("thread_id"),
     }
     headers = {"Authorization": f"Bearer {token}"}
@@ -92,37 +80,30 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
         status_events: list[str] = []
         source_status: dict[str, str] = dict(st.session_state.get("last_source_status") or {})
         answer_buf: list[str] = []
-        draft: dict[str, Any] | None = None
+        references: list[dict[str, Any]] = []
 
         try:
-            for evt in iter_sse(
-                f"{api_base()}/chat/stream", json_body=body, headers=headers
-            ):
+            for evt in iter_sse(f"{api_base()}/chat/stream", json_body=body, headers=headers):
                 evt: SSEEvent
                 if evt.event == "token":
-                    delta = evt.data.get("delta", "")
-                    answer_buf.append(delta)
+                    answer_buf.append(evt.data.get("delta", ""))
                     answer_slot.markdown("".join(answer_buf))
                 elif evt.event == "tool_call_start":
                     status_events.append(f"⏳ {evt.data.get('tool', '?')} …")
                     status_slot.info(" · ".join(status_events[-3:]))
                 elif evt.event == "tool_call_end":
                     tool = evt.data.get("tool", "?")
-                    hits = evt.data.get("hit_count")
-                    status_events.append(f"✔ {tool} ({hits} hits)")
+                    srcs = evt.data.get("sources_queried") or []
+                    label = f"✔ {tool}" + (f" (sources: {', '.join(srcs)})" if srcs else "")
+                    status_events.append(label)
                     status_slot.info(" · ".join(status_events[-3:]))
                 elif evt.event == "source_status":
                     source_status[evt.data.get("source", "?")] = evt.data.get("status", "?")
-                elif evt.event == "draft":
-                    draft = evt.data.get("draft") or evt.data
                 elif evt.event == "final":
-                    if not answer_buf:  # non-streaming fallback
+                    if not answer_buf:  # fallback if no token frames were sent
                         answer_buf.append(evt.data.get("answer", ""))
                         answer_slot.markdown("".join(answer_buf))
-                    if evt.data.get("draft"):
-                        draft = evt.data["draft"]
-                    if evt.data.get("source_status"):
-                        source_status.update(evt.data["source_status"])
+                    references = evt.data.get("references") or []
                 elif evt.event == "error":
                     st.error(f"Error: {evt.data.get('message', 'unknown')}")
         except Exception as e:
@@ -130,10 +111,8 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
 
         status_slot.empty()
         _render_source_status(source_status)
+        _render_references(references)
         st.session_state["last_source_status"] = source_status
 
     final_answer = "".join(answer_buf).strip() or "(no response)"
     append_message("assistant", final_answer)
-    st.session_state["last_draft"] = draft
-    if draft:
-        _render_draft(draft)

@@ -10,7 +10,6 @@ def init_session_state() -> None:
     st.session_state.setdefault("token", None)
     st.session_state.setdefault("messages", [])  # list[{"role":"user|assistant","content":str}]
     st.session_state.setdefault("thread_id", None)
-    st.session_state.setdefault("last_draft", None)
     st.session_state.setdefault("last_source_status", {})
 
 
@@ -19,7 +18,7 @@ def is_logged_in() -> bool:
 
 
 def logout() -> None:
-    for k in ("user", "token", "messages", "thread_id", "last_draft", "last_source_status"):
+    for k in ("user", "token", "messages", "thread_id", "last_source_status"):
         st.session_state.pop(k, None)
     init_session_state()
 

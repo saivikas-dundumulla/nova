@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import streamlit as st
 
-from app.ui.pages.enduser import render_enduser
-from app.ui.pages.login import render_login
-from app.ui.pages.ombuds import render_ombuds
+from app.ui.views.enduser import render_enduser
+from app.ui.views.login import render_login
+from app.ui.views.ombuds import render_ombuds
 from app.ui.state import (
     api_base,
     init_session_state,

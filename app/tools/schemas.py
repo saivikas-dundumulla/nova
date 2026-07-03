@@ -1,49 +1,34 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-SourceType = Literal["servicenow", "confluence"]
+
+class ChatTurn(BaseModel):
+    """A single prior turn in the conversation, sent to the knowledge base for context."""
+
+    role: str = Field(..., description="'user' or 'assistant'.")
+    content: str
 
 
-class SearchHit(BaseModel):
+class KBReference(BaseModel):
+    """A grounding reference returned by the knowledge base (citation)."""
+
     id: str | None = None
-    source_type: str | None = None
-    incident_number: str | None = None
+    type: str | None = None  # e.g. 'mcpServer', 'searchIndex', 'azureBlob'
+    doc_key: str | None = None
     title: str | None = None
-    content: str | None = None
     url: str | None = None
-    score: float | None = None
+    source_data: dict[str, Any] | None = None
 
 
-class SearchQuery(BaseModel):
-    query: str = Field(..., description="Free-text semantic query.")
-    source_filter: SourceType | None = Field(
-        default=None,
-        description="Restrict to 'servicenow' or 'confluence' records.",
-    )
-    incident_number: str | None = Field(
-        default=None,
-        description="Exact-match on ServiceNow incident number.",
-    )
-    top_k: int = Field(default=8, ge=1, le=50)
+class KBResult(BaseModel):
+    """Parsed result of a knowledge base retrieve call."""
 
-
-class LogHit(BaseModel):
-    ts: str | None = None
-    service: str | None = None
-    level: str | None = None
-    message: str | None = None
-    trace_id: str | None = None
-    raw: dict | None = None
-
-
-class KibanaQuery(BaseModel):
-    query: str = Field(..., description="Free-text log query.")
-    service: str | None = Field(default=None, description="Optional service.name filter.")
-    time_range: str = Field(
-        default="24h",
-        description="Time window ending now, e.g. '15m', '1h', '24h'.",
-    )
-    max_hits: int = Field(default=25, ge=1, le=200)
+    answer: str
+    references: list[KBReference] = Field(default_factory=list)
+    # Which knowledge sources were actually queried (from the activity array).
+    sources_queried: list[str] = Field(default_factory=list)
+    activity_types: list[str] = Field(default_factory=list)
+    partial: bool = False  # True when the service returned 206 Partial Content
