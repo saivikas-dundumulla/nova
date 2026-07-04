@@ -47,6 +47,9 @@ htmlcov/
 logs/
 *.log
 
+# Conversation store (per-user data)
+data/
+
 # IDEs
 .idea/
 .vscode/

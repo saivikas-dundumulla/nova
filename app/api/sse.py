@@ -4,6 +4,8 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
+from app.memory import store
+from app.memory.cache import find_cached_answer
 from app.tools.errors import SourceUnavailable
 from app.tools.knowledge_base import KnowledgeBaseClient
 from app.tools.schemas import ChatTurn
@@ -40,14 +42,47 @@ def _chunk_answer(text: str, size: int = 24) -> list[str]:
 async def stream_kb_answer(
     *,
     prompt: str,
+    question: str,
     knowledge_base: str,
     history: list[ChatTurn],
     role: str,
     user_id: str,
     thread_id: str,
+    incident_number: str | None = None,
     client: KnowledgeBaseClient | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """Query the knowledge base and stream SSE frames (status, chunked answer, final)."""
+    """Answer a turn: reuse a similar past answer if available, else query the KB.
+
+    `question` is the raw user message (used for cache matching + persistence);
+    `prompt` is what actually gets sent to the knowledge base (may add persona framing).
+    """
+    # 1) Try the per-user conversation cache first.
+    cached = find_cached_answer(user_id, question, incident_number=incident_number)
+    if cached is not None:
+        yield frame(
+            "cache_hit",
+            {"score": cached["score"], "matched_question": cached["matched_question"]},
+        )
+        for chunk in _chunk_answer(cached["answer"]):
+            yield frame("token", {"delta": chunk})
+        yield frame(
+            "final",
+            {
+                "answer": cached["answer"],
+                "references": cached.get("references", []),
+                "sources_queried": [],
+                "partial": False,
+                "cached": True,
+                "cache_score": cached["score"],
+            },
+        )
+        store.append_turn(
+            user_id, thread_id, question, cached["answer"],
+            incident_number=incident_number, references=cached.get("references", []), cached=True,
+        )
+        return
+
+    # 2) Cache miss — query the knowledge base.
     kb = client or KnowledgeBaseClient()
     yield frame("tool_call_start", {"tool": f"knowledge_base:{knowledge_base}"})
     try:
@@ -85,12 +120,19 @@ async def stream_kb_answer(
     for chunk in _chunk_answer(result.answer):
         yield frame("token", {"delta": chunk})
 
+    references = [r.model_dump() for r in result.references]
     yield frame(
         "final",
         {
             "answer": result.answer,
-            "references": [r.model_dump() for r in result.references],
+            "references": references,
             "sources_queried": result.sources_queried,
             "partial": result.partial,
+            "cached": False,
         },
+    )
+    # 3) Persist the new Q&A so it can serve future similar questions.
+    store.append_turn(
+        user_id, thread_id, question, result.answer,
+        incident_number=incident_number, references=references, cached=False,
     )

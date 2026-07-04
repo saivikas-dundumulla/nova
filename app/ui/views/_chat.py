@@ -82,10 +82,19 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
         answer_buf: list[str] = []
         references: list[dict[str, Any]] = []
 
+        cached_note = ""
         try:
             for evt in iter_sse(f"{api_base()}/chat/stream", json_body=body, headers=headers):
                 evt: SSEEvent
-                if evt.event == "token":
+                if evt.event == "meta":
+                    tid = evt.data.get("thread_id")
+                    if tid:
+                        st.session_state["thread_id"] = tid
+                elif evt.event == "cache_hit":
+                    score = evt.data.get("score")
+                    cached_note = f"↩ Answered from a previous conversation (similarity {score})."
+                    status_slot.info(cached_note)
+                elif evt.event == "token":
                     answer_buf.append(evt.data.get("delta", ""))
                     answer_slot.markdown("".join(answer_buf))
                 elif evt.event == "tool_call_start":
@@ -110,6 +119,8 @@ def render_chat(role: str, needs_incident_number: bool) -> None:
             st.error(f"Streaming failed: {e}")
 
         status_slot.empty()
+        if cached_note:
+            st.caption(cached_note)
         _render_source_status(source_status)
         _render_references(references)
         st.session_state["last_source_status"] = source_status

@@ -123,6 +123,47 @@ def test_chat_stream_role_mismatch_returns_error_frame():
     assert err and err[0]["data"]["code"] == "forbidden"
 
 
+def test_second_identical_question_served_from_cache():
+    fake = _FakeKB(result=KBResult(answer="Reset via Settings."))
+    with patch("app.api.sse.KnowledgeBaseClient", return_value=fake):
+        app = create_app()
+        with TestClient(app) as client:
+            token = _login(client, "enduser1")
+            hdr = {"Authorization": f"Bearer {token}"}
+            q = {"role": "enduser", "message": "how do I reset my VPN password"}
+            _sse_frames(client.post("/chat/stream", headers=hdr, json=q))
+            ev2 = _sse_frames(client.post("/chat/stream", headers=hdr, json=q))
+
+    # KB queried once; the repeat was answered from the per-user cache.
+    assert len(fake.calls) == 1
+    assert any(e["event"] == "cache_hit" for e in ev2)
+    final2 = [e for e in ev2 if e["event"] == "final"][-1]
+    assert final2["data"]["cached"] is True
+    assert "Reset via Settings." in final2["data"]["answer"]
+
+
+def test_conversations_endpoints_return_persisted_history():
+    fake = _FakeKB(result=KBResult(answer="An answer."))
+    with patch("app.api.sse.KnowledgeBaseClient", return_value=fake):
+        app = create_app()
+        with TestClient(app) as client:
+            token = _login(client, "enduser1")
+            hdr = {"Authorization": f"Bearer {token}"}
+            _sse_frames(
+                client.post(
+                    "/chat/stream",
+                    headers=hdr,
+                    json={"role": "enduser", "message": "my unique question about onboarding"},
+                )
+            )
+            threads = client.get("/conversations", headers=hdr).json()["threads"]
+            assert threads, "expected a persisted thread"
+            tid = threads[0]["thread_id"]
+            msgs = client.get(f"/conversations/{tid}", headers=hdr).json()["messages"]
+            assert [m["role"] for m in msgs] == ["user", "assistant"]
+            assert msgs[0]["content"] == "my unique question about onboarding"
+
+
 def test_chat_stream_source_unavailable_emits_error_not_500():
     fake = _FakeKB(error=SourceUnavailable("azure_search", "down"))
     with patch("app.api.sse.KnowledgeBaseClient", return_value=fake):

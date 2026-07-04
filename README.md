@@ -20,6 +20,11 @@ Streamlit UI  ──SSE──▶  FastAPI /chat/stream  ──HTTPS──▶  Az
 - **One external dependency.** The only outbound connection is to the Azure AI Search endpoint.
 - The retrieve API returns the whole answer at once; the backend chunks it into SSE `token` frames so the UI still renders a live typing effect.
 
+### Conversation memory + answer cache
+
+- **Persistence.** Every turn is saved per user as JSON under `CONVERSATIONS_DIR` (default `data/conversations/<user>.json`). The UI shows past conversations in the sidebar and can reopen any of them.
+- **Cache before LLM.** On each new question the backend first checks the user's past Q&A with a lexical similarity match (no extra dependency). If a previous question scores at/above `CACHE_SIMILARITY_THRESHOLD`, its answer is reused and the knowledge base is **not** called (the UI shows an "answered from a previous conversation" note). Matching is scoped per user, and per incident number in the ombuds flow, so answers never leak across users or incidents.
+
 ## Quick start
 
 Requires Python 3.11+.
@@ -60,6 +65,7 @@ See `.env.example` for the full list. Key groups:
 | Group | Purpose |
 |---|---|
 | `AZURE_SEARCH_*` | Knowledge base endpoint, API key, API version, and KB name (`nova-kb`) |
+| `CONVERSATIONS_DIR`, `CACHE_*` | Per-user conversation store location + answer-cache toggle/threshold |
 | `SESSION_JWT_*` | Stub-auth session token signing |
 | `AUTH_USERS_JSON` | Stub-auth user store (JSON dict, bcrypt hashes) |
 | `AUDIT_LOG_*` | JSONL audit log file settings |
@@ -81,8 +87,9 @@ app/
 ├── config/     Settings + logging config
 ├── auth/       User model + Authenticator Protocol + stub impl
 ├── audit/      JSONL audit sink + event models
+├── memory/     Per-user JSON conversation store + lexical answer cache
 ├── tools/      Knowledge base client (Azure AI Search retrieve) + schemas
-├── api/        FastAPI app + SSE chat endpoint
+├── api/        FastAPI app + SSE chat endpoint + conversations endpoints
 └── ui/         Streamlit frontend (views/ holds login + role screens; not a Streamlit pages/ dir on purpose)
 tests/
 ├── unit/       Auth, audit, KB client, SSE parser

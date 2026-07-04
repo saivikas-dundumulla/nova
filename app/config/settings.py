@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     azure_search_timeout_seconds: float = 120.0
     azure_search_max_retries: int = 2
 
+    # Conversation memory (per-user JSON store) + answer cache
+    conversations_dir: str = "data/conversations"
+    cache_enabled: bool = True
+    # Question-similarity score (0..1) at/above which a past answer is reused instead of the KB.
+    cache_similarity_threshold: float = 0.82
+    # Ignore very short questions for cache matching (too ambiguous to reuse safely).
+    cache_min_question_chars: int = 8
+
     # Audit / logging
     audit_log_path: str = "logs/audit.log"
     audit_log_max_bytes: int = 10 * 1024 * 1024

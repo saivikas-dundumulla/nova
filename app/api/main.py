@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import routes_auth, routes_chat
+from app.api import routes_auth, routes_chat, routes_conversations
 from app.config.logging_config import get_app_logger, setup_logging
 from app.config.settings import get_settings
 
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(routes_auth.router)
     app.include_router(routes_chat.router)
+    app.include_router(routes_conversations.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:

@@ -53,13 +53,18 @@ async def chat_stream(
     kb = settings.knowledge_base_for_role(body.role)
 
     async def event_gen():
+        # Tell the client which thread this turn belongs to so it can keep the
+        # conversation together across turns (persisted per user).
+        yield frame("meta", {"thread_id": thread_id})
         async for f in stream_kb_answer(
             prompt=prompt,
+            question=body.message,
             knowledge_base=kb,
             history=body.history,
             role=body.role,
             user_id=user.id,
             thread_id=thread_id,
+            incident_number=body.incident_number,
         ):
             if await request.is_disconnected():
                 break

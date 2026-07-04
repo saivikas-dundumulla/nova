@@ -37,6 +37,7 @@ def _isolate_audit_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point audit log at a temp file per test; clear cached Settings and audit logger."""
     log_file = tmp_path / "audit.log"
     monkeypatch.setenv("AUDIT_LOG_PATH", str(log_file))
+    monkeypatch.setenv("CONVERSATIONS_DIR", str(tmp_path / "conversations"))
 
     from app.config import settings as settings_mod
     settings_mod.get_settings.cache_clear()
