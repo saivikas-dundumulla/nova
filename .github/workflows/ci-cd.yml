@@ -48,6 +48,6 @@ jobs:
       - name: Deploy to App Service (Oryx builds from requirements.txt server-side)
         uses: azure/webapps-deploy@v3
         with:
-          app-name: nova-ombuds-assistant
+          app-name: nova-service
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
