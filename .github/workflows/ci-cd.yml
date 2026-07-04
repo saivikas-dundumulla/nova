@@ -45,7 +45,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to App Service (Oryx builds from requirements.txt server-side)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install runtime dependencies into the package
+        # Ship deps with the code so the app does not depend on an Azure-side Oryx build.
+        # ubuntu-latest and App Service Linux are both x86_64/cp312, so wheels are compatible.
+        run: pip install -r requirements.txt --target ".python_packages/lib/site-packages"
+
+      - name: Deploy to App Service
         uses: azure/webapps-deploy@v3
         with:
           app-name: nova-service

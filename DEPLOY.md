@@ -91,7 +91,7 @@ You should see uvicorn start on 127.0.0.1:8000, then Streamlit on 8501. The heal
 The workflow at [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) runs two jobs:
 
 - **test** — on every push and PR to `master`: installs deps, runs `ruff` and `pytest`.
-- **deploy** — only on push to `master`, only if **test** passed: deploys the repo to App Service. Oryx builds from `requirements.txt` server-side (keep `SCM_DO_BUILD_DURING_DEPLOYMENT=true`).
+- **deploy** — only on push to `master`, only if **test** passed: installs `requirements.txt` into `.python_packages/lib/site-packages` and deploys the repo (code **plus** its dependencies). `startup.sh` adds that folder to `PYTHONPATH`, so the app runs without depending on an Azure-side Oryx build. This is why `SCM_DO_BUILD_DURING_DEPLOYMENT` is not required with this pipeline.
 
 ### One-time setup (publish-profile method — default)
 

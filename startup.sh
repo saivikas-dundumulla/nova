@@ -4,6 +4,10 @@
 # FastAPI is internal-only on 127.0.0.1:8000 and reached by the UI over localhost.
 set -e
 
+# Dependencies are shipped by CI into .python_packages (see .github/workflows/ci-cd.yml),
+# so make them importable regardless of whether an Oryx build ran.
+export PYTHONPATH="/home/site/wwwroot/.python_packages/lib/site-packages:${PYTHONPATH:-}"
+
 # /home is the ONLY persistent path on App Service — keep the JSON store + logs there.
 mkdir -p /home/data/conversations /home/data/logs
 
