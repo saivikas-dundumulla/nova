@@ -28,7 +28,13 @@ def append_message(role: str, content: str) -> None:
 
 
 def api_base() -> str:
-    return st.session_state.get("api_base") or "http://127.0.0.1:8000"
+    import os
+
+    return (
+        st.session_state.get("api_base")
+        or os.environ.get("NOVA_API_BASE")
+        or "http://127.0.0.1:8000"
+    )
 
 
 def set_api_base(url: str) -> None:
